@@ -27,6 +27,10 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+const (
+	rcDefaultRegionCacheTTL = time.Minute * 2
+)
+
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
@@ -35,8 +39,8 @@ type RegionCache struct {
 	 * within the critical section protected by this lock,
 	 * mu.lock should not be invoked.
 	 */
-	ttlLock	sync.RWMutex
-	mu       struct {
+	ttlLock sync.RWMutex
+	mu      struct {
 		sync.RWMutex
 		regions map[RegionVerID]*Region
 		sorted  *llrb.LLRB
@@ -46,7 +50,6 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-
 }
 
 // NewRegionCache creates a RegionCache.
@@ -55,7 +58,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
-	c.mu.ttls	= make(map[RegionVerID]time.Time)
+	c.mu.ttls = make(map[RegionVerID]time.Time)
 	c.mu.sorted = llrb.New()
 	c.storeMu.stores = make(map[uint64]*Store)
 	return c
@@ -76,31 +79,31 @@ func (c *RPCContext) GetStoreID() uint64 {
 	return 0
 }
 
-// CheckInvalidCache checks whether the region is out of date
-func(c *RegionCache) IsCacheValid(id RegionVerID) bool {
+// IsCacheValid checks whether the region is out of date
+func (c *RegionCache) IsCacheValid(id RegionVerID) bool {
 	c.ttlLock.RLock()
 	ttl, ok := c.mu.ttls[id]
 	c.ttlLock.RUnlock()
 	if !ok {
 		return true
-	} 
-	
+	}
+
 	if time.Now().After(ttl) {
 		return false
 	}
-		
+
 	return true
 }
 
 // FreshTTL updates the ttl of a given region
-func(c *RegionCache) FreshTTL(id RegionVerID) {
+func (c *RegionCache) FreshTTL(id RegionVerID) {
 	c.ttlLock.Lock()
 	defer c.ttlLock.Unlock()
-	c.mu.ttls[id] = time.Now().Add(time.Second * 120)
+	c.mu.ttls[id] = time.Now().Add(rcDefaultRegionCacheTTL)
 }
 
 // DeleteTTL removes the ttl of the given region
-func(c *RegionCache) DeleteTTL(id RegionVerID) {
+func (c *RegionCache) DeleteTTL(id RegionVerID) {
 	c.ttlLock.Lock()
 	defer c.ttlLock.Unlock()
 	delete(c.mu.ttls, id)
@@ -269,9 +272,9 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 	if !ok {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
 		return
-	} else {
-		c.FreshTTL(r.VerID())
 	}
+
+	c.FreshTTL(r.VerID())
 
 	if !r.SwitchPeer(leaderStoreID) {
 		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
@@ -324,7 +327,7 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	r, ok := c.mu.regions[verID]
 	if !ok {
-		c.DeleteTTL(r.VerID())
+		c.DeleteTTL(verID)
 		return
 	}
 	c.mu.sorted.Delete(newRBItem(r))
