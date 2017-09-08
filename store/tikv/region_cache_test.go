@@ -84,6 +84,10 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
+	s.cache.mu.ttls[r.VerID()] = time.Now()
+	r = s.cache.getRegionFromCache([]byte("a"))
+	c.Assert(r, IsNil)
+
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
